@@ -1,6 +1,8 @@
 use std::collections::hash_map::Values;
 use std::collections::HashMap;
 
+pub type PathParams = HashMap<String, String>;
+
 /// Lookup mechanism that uses inexact matching of input paths by finding the most specific
 /// match and returning that instead.  See [`PathMatcher::lookup`] for more information.
 #[derive(Debug)]
@@ -34,11 +36,30 @@ impl<V> PathMatcher<V> {
     /// require an exact match of input path!  See [`MatchedResult`] for more information.
     pub fn lookup(&self, path: &[String]) -> Option<MatchedResult<V>> {
         for search_depth in (0..path.len() + 1).rev() {
-            let search_path = &path[0..search_depth];
-            if let Some(value) = self.map.get(search_path) {
+            let mut best = None;
+            for (pattern, value) in &self.map {
+                if pattern.len() != search_depth {
+                    continue;
+                }
+                let Some(params) = match_path(pattern, &path[..search_depth]) else {
+                    continue;
+                };
+                let literal_count = pattern
+                    .iter()
+                    .filter(|segment| !is_parameter(segment))
+                    .count();
+                if best
+                    .as_ref()
+                    .is_none_or(|(best_count, _): &(usize, _)| literal_count > *best_count)
+                {
+                    best = Some((literal_count, (value, params)));
+                }
+            }
+            if let Some((_, (value, params))) = best {
                 return Some(MatchedResult {
                     value,
                     matched_index: search_depth,
+                    params,
                 });
             }
         }
@@ -52,11 +73,17 @@ impl<V> PathMatcher<V> {
     pub fn match_all(&self, path: &[String]) -> Vec<MatchedResult<V>> {
         let mut result = Vec::new();
         for search_depth in (0..path.len() + 1).rev() {
-            let search_path = &path[0..search_depth];
-            if let Some(value) = self.map.get(search_path) {
+            let mut matches = self.map.iter().filter_map(|(pattern, value)| {
+                (pattern.len() == search_depth)
+                    .then(|| match_path(pattern, &path[..search_depth]))
+                    .flatten()
+                    .map(|params| (value, params))
+            });
+            if let Some((value, params)) = matches.next() {
                 result.push(MatchedResult {
                     value,
                     matched_index: search_depth,
+                    params,
                 });
             }
         }
@@ -94,6 +121,29 @@ pub fn key_from_path(path: &str) -> Vec<String> {
 pub struct MatchedResult<'a, V> {
     pub value: &'a V,
     pub matched_index: usize,
+    pub params: PathParams,
+}
+
+fn is_parameter(segment: &str) -> bool {
+    segment.starts_with('{') && segment.ends_with('}') && segment.len() > 2
+}
+
+fn match_path(pattern: &[String], path: &[String]) -> Option<PathParams> {
+    let mut params = PathParams::new();
+    for (pattern_segment, path_segment) in pattern.iter().zip(path) {
+        if is_parameter(pattern_segment) {
+            let name = &pattern_segment[1..pattern_segment.len() - 1];
+            if params
+                .insert(name.to_owned(), path_segment.clone())
+                .is_some()
+            {
+                return None;
+            }
+        } else if pattern_segment != path_segment {
+            return None;
+        }
+    }
+    Some(params)
 }
 
 #[cfg(test)]
@@ -117,6 +167,23 @@ mod tests {
     fn test_inexact_match() {
         let matcher = new_matcher(["/a/b/c"]);
         assert_prefix_match(&matcher, "/a/b/c/d", "/a/b/c", "d");
+    }
+
+    #[test]
+    fn test_dynamic_match() {
+        let matcher = new_matcher(["/api/v1/{token}/telemetry"]);
+        let result = matcher
+            .lookup(&path_to_vec("/api/v1/device-token/telemetry"))
+            .unwrap();
+        assert_eq!(result.params.get("token"), Some(&"device-token".to_owned()));
+    }
+
+    #[test]
+    fn test_literal_match_beats_dynamic_match() {
+        let matcher = new_matcher(["/api/{value}/status", "/api/v1/status"]);
+        let result = matcher.lookup(&path_to_vec("/api/v1/status")).unwrap();
+        assert_eq!(result.value, "/api/v1/status");
+        assert!(result.params.is_empty());
     }
 
     fn new_matcher<const N: usize>(paths: [&str; N]) -> PathMatcher<String> {

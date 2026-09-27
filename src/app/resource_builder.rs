@@ -24,6 +24,7 @@ pub struct ResourceBuilder<Endpoint: Ord + Clone> {
     attributes: CoreLink,
     handlers: HashMap<RequestTypeKey, Box<dyn RequestHandler<Endpoint> + Send + Sync>>,
     observable: Option<Box<dyn ObservableResource + Send + Sync>>,
+    exact: bool,
 }
 
 impl<Endpoint: Debug + Clone + Eq + Hash + Ord + Send + 'static> ResourceBuilder<Endpoint> {
@@ -34,6 +35,7 @@ impl<Endpoint: Debug + Clone + Eq + Hash + Ord + Send + 'static> ResourceBuilder
             attributes: CoreLink::new(path),
             handlers: HashMap::new(),
             observable: None,
+            exact: false,
         }
     }
 
@@ -66,6 +68,12 @@ impl<Endpoint: Debug + Clone + Eq + Hash + Ord + Send + 'static> ResourceBuilder
     /// "4.05 Method not allowed".
     pub fn default_handler(self, handler: impl RequestHandler<Endpoint> + Send + Sync) -> Self {
         self.handler(RequestTypeKey::new_match_all(), handler)
+    }
+
+    /// Require the complete request path to match this resource.
+    pub fn exact(mut self) -> Self {
+        self.exact = true;
+        self
     }
 
     /// Set a request handler for "Get" requests.
@@ -160,6 +168,7 @@ impl<Endpoint: Debug + Clone + Eq + Hash + Ord + Send + 'static> ResourceBuilder
             observe_handler,
             block_handler,
             retransmission_manager: params.retransmission_manager,
+            exact: self.exact,
         };
         Resource {
             path: self.path,

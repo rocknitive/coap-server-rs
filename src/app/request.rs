@@ -1,4 +1,5 @@
 use coap_lite::{CoapRequest, CoapResponse, RequestType, ResponseType};
+use std::collections::HashMap;
 
 use crate::app::response::Response;
 
@@ -9,6 +10,7 @@ use crate::app::response::Response;
 pub struct Request<Endpoint> {
     pub original: CoapRequest<Endpoint>,
     pub unmatched_path: Vec<String>,
+    pub path_params: HashMap<String, String>,
 }
 
 impl<Endpoint> Request<Endpoint> {

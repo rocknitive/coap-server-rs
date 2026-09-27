@@ -20,6 +20,7 @@ pub struct ResourceHandler<Endpoint: Debug + Clone + Ord + Eq + Hash> {
     pub observe_handler: Option<Arc<Mutex<ObserveHandler<Endpoint>>>>,
     pub block_handler: Option<Arc<Mutex<BlockHandler<Endpoint>>>>,
     pub retransmission_manager: Arc<Mutex<RetransmissionManager<Endpoint>>>,
+    pub exact: bool,
 }
 
 impl<Endpoint: Debug + Clone + Ord + Eq + Hash> Clone for ResourceHandler<Endpoint> {
@@ -34,6 +35,7 @@ impl<Endpoint: Debug + Clone + Ord + Eq + Hash> Clone for ResourceHandler<Endpoi
             observe_handler: self.observe_handler.clone(),
             block_handler: self.block_handler.clone(),
             retransmission_manager: self.retransmission_manager.clone(),
+            exact: self.exact,
         }
     }
 }
@@ -162,6 +164,7 @@ impl<Endpoint: Debug + Clone + Eq + Hash + Ord + Send + 'static> ResourceHandler
             .handle(Request {
                 original,
                 unmatched_path: wrapped_request.unmatched_path.clone(),
+                path_params: wrapped_request.path_params.clone(),
             })
             .await?;
         current_pair.response = Some(response);

@@ -214,11 +214,16 @@ impl<Endpoint: Debug + Clone + Ord + Eq + Hash + Send + 'static> AppHandler<Endp
         match resource {
             Some(MatchedResult {
                 matched_index,
+                params,
                 value,
             }) => {
+                if value.exact && matched_index != paths.len() {
+                    return Err(CoapError::not_found());
+                }
                 let wrapped_request = Request {
                     original: request.clone(),
                     unmatched_path: Vec::from(&paths[matched_index..]),
+                    path_params: params,
                 };
 
                 value.handle(tx, wrapped_request).await
