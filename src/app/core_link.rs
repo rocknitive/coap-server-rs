@@ -8,7 +8,10 @@ use std::fmt::{Debug, Error, Write};
 #[derive(Default, Debug)]
 pub struct CoreLink {
     path: String,
-    attributes: Vec<(&'static str, Box<dyn LinkAttributeValue<String>>)>,
+    attributes: Vec<(
+        &'static str,
+        Box<dyn LinkAttributeValue<String> + Send + Sync>,
+    )>,
 }
 
 impl CoreLink {
@@ -19,7 +22,11 @@ impl CoreLink {
         }
     }
 
-    pub fn attr(&mut self, key: &'static str, value: impl LinkAttributeValue<String> + 'static) {
+    pub fn attr(
+        &mut self,
+        key: &'static str,
+        value: impl LinkAttributeValue<String> + Send + Sync + 'static,
+    ) {
         self.attributes.push((key, Box::new(value)));
     }
 
@@ -74,7 +81,7 @@ impl Clone for CoreLink {
     }
 }
 
-pub trait LinkAttributeValue<T>: DynClone + Debug {
+pub trait LinkAttributeValue<T>: DynClone + Debug + Send + Sync {
     fn format_for_comparison(&self) -> String;
     fn write_to<'a, 'b>(
         &self,
