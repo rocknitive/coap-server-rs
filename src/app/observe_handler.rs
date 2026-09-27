@@ -10,7 +10,6 @@ use std::sync::Arc;
 
 use coap_lite::{CoapRequest, ObserveOption};
 use log::{debug, warn};
-use rand::RngCore;
 use tokio::sync::{oneshot, watch, Mutex};
 
 use crate::app::observers::NotificationState;
@@ -99,7 +98,7 @@ impl<Endpoint: Eq + Hash + Clone + Send + 'static> ObserveHandler<Endpoint> {
             ObserveOption::Register => {
                 let for_path = by_path.entry(path).or_insert_with_key(|path_key| {
                     let mut u24_bytes = [0u8; 3];
-                    rand::thread_rng().fill_bytes(&mut u24_bytes);
+                    rand::fill(&mut u24_bytes);
                     let relative_path = path_key.replace(&self.path_prefix, "");
                     let observers = Observers::new(
                         key_from_path(&relative_path),

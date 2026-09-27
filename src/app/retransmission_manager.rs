@@ -7,7 +7,6 @@ use std::time::Duration;
 
 use coap_lite::{MessageType, Packet};
 use log::debug;
-use rand::Rng;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::watch;
 use tokio::time;
@@ -50,7 +49,7 @@ enum ReplyEvent {
 impl<Endpoint: Debug + Clone + Eq + Hash> RetransmissionManager<Endpoint> {
     pub fn new(parameters: TransmissionParameters) -> Self {
         Self {
-            next_message_id: rand::thread_rng().gen(),
+            next_message_id: rand::random(),
             unacknowledged_messages: Default::default(),
             parameters,
         }
@@ -169,7 +168,7 @@ impl<Endpoint: Debug> SendReliably<Endpoint> {
     }
 
     pub async fn into_future(self) -> Result<(), SendFailed> {
-        let mut next_timeout = rand::thread_rng().gen_range(self.parameters.ack_timeout_range());
+        let mut next_timeout = rand::random_range(self.parameters.ack_timeout_range());
         for attempt in 0..=self.parameters.max_retransmit {
             if attempt > 0 {
                 let retransmits = attempt - 1;

@@ -54,8 +54,15 @@ impl ObserversHolder {
     pub async fn attach(&self, observers: Observers) -> Attached<'_> {
         let key = observers.relative_path_key.clone();
         let observers_arc = Arc::new(observers);
-        self.inner.write().await.insert(key.clone(), observers_arc.clone());
-        Attached { key, value: observers_arc, holder: self }
+        self.inner
+            .write()
+            .await
+            .insert(key.clone(), observers_arc.clone());
+        Attached {
+            key,
+            value: observers_arc,
+            holder: self,
+        }
     }
 
     /// Defers to [`Observers::notify_change`] when attached; does nothing otherwise.

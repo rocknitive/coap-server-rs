@@ -156,12 +156,12 @@ impl<Endpoint: Debug + Clone + Eq + Hash + Ord + Send + 'static> ResourceHandler
         wrapped_request: Request<Endpoint>,
     ) -> Result<(), CoapError> {
         let original = current_pair.clone();
-        let response = handler.handle(
-            Request {
+        let response = handler
+            .handle(Request {
                 original,
                 unmatched_path: wrapped_request.unmatched_path.clone(),
-            }
-        ).await?;
+            })
+            .await?;
         current_pair.response = Some(response);
         let _ = self.maybe_handle_block_response(current_pair).await?;
         Ok(())
