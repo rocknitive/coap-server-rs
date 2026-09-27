@@ -73,18 +73,17 @@ impl<V> PathMatcher<V> {
     pub fn match_all(&self, path: &[String]) -> Vec<MatchedResult<V>> {
         let mut result = Vec::new();
         for search_depth in (0..path.len() + 1).rev() {
-            let mut matches = self.map.iter().filter_map(|(pattern, value)| {
-                (pattern.len() == search_depth)
-                    .then(|| match_path(pattern, &path[..search_depth]))
-                    .flatten()
-                    .map(|params| (value, params))
-            });
-            if let Some((value, params)) = matches.next() {
-                result.push(MatchedResult {
-                    value,
-                    matched_index: search_depth,
-                    params,
-                });
+            for (pattern, value) in &self.map {
+                if pattern.len() != search_depth {
+                    continue;
+                }
+                if let Some(params) = match_path(pattern, &path[..search_depth]) {
+                    result.push(MatchedResult {
+                        value,
+                        matched_index: search_depth,
+                        params,
+                    });
+                }
             }
         }
         result
