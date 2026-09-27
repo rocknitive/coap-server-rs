@@ -80,7 +80,7 @@ where
         loop {
             tokio::select! {
                 event = self.binding.select_next_some() => {
-                    self.handle_rx_event(event)?;
+                    self.handle_rx_event_for(&handler, event)?;
                 }
                 Some(item) = self.packet_relay_rx.recv() => {
                     self.handle_packet_relay(item).await;
@@ -117,6 +117,35 @@ where
         Ok(())
     }
 
+    fn handle_rx_event_for<H>(
+        &self,
+        handler: &H,
+        result: Result<FramedItem<Endpoint>, FramedReadError<Endpoint>>,
+    ) -> Result<(), FatalServerError>
+    where
+        H: PacketHandler<Endpoint> + Clone + Send + 'static,
+    {
+        match result {
+            Ok((packet, peer)) => {
+                let reply_stream = Self::gen_and_send_responses(
+                    handler.clone(),
+                    self.packet_relay_tx.clone(),
+                    packet,
+                    peer,
+                );
+                tokio::spawn(reply_stream);
+            }
+            Err((transport_err, peer)) => {
+                warn!("Error from {peer:?}: {transport_err}");
+                if peer.is_none() {
+                    return Err(transport_err.into());
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn do_handle_request(&self, packet: Packet, peer: Endpoint) -> Result<(), FatalServerError> {
         let handler = self
             .handler
@@ -132,12 +161,14 @@ where
         Ok(())
     }
 
-    async fn gen_and_send_responses(
-        handler: Handler,
+    async fn gen_and_send_responses<H>(
+        handler: H,
         packet_tx: Sender<FramedItem<Endpoint>>,
         packet: Packet,
         peer: Endpoint,
-    ) {
+    ) where
+        H: PacketHandler<Endpoint>,
+    {
         let mut stream = handler.handle(packet, peer.clone());
         while let Some(response) = stream.next().await {
             let cloned_peer = peer.clone();
