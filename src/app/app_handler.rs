@@ -205,10 +205,11 @@ impl<Endpoint: Debug + Clone + Ord + Eq + Hash + Send + 'static> AppHandler<Endp
         if log::log_enabled!(log::Level::Debug) {
             let peer = &request.source;
             let method = request.get_method();
+            let path = request.get_path();
             let handler_label = resource
                 .as_ref()
                 .map_or_else(|| ": <no resource>!", |_| ": matched resource...");
-            debug!("Received from [{peer:?}]: {method:?}{handler_label}");
+            debug!("Received from [{peer:?}]: {method:?} /{path}{handler_label}");
         }
 
         match resource {
