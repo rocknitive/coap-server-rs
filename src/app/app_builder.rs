@@ -2,26 +2,35 @@ use std::fmt::Debug;
 use std::hash::Hash;
 
 use crate::app::app_handler::AppHandler;
+use crate::app::control::{AppControl, ControlCommand};
+use crate::app::retransmission_manager::TransmissionParameters;
 use crate::app::ResourceBuilder;
 use crate::packet_handler::IntoHandler;
+use tokio::sync::mpsc;
 
 /// Main builder API to configure how the CoAP server should respond to requests
 pub struct AppBuilder<Endpoint: Ord + Clone> {
     pub(crate) config: ConfigBuilder,
     pub(crate) resources: Vec<ResourceBuilder<Endpoint>>,
+    pub(crate) control: AppControl<Endpoint>,
+    pub(crate) control_receiver: Option<mpsc::Receiver<ControlCommand<Endpoint>>>,
 }
 
 #[derive(Debug, Default, Clone)]
 pub(crate) struct ConfigBuilder {
     pub discoverable: Option<bool>,
     pub block_transfer: Option<bool>,
+    pub transmission_parameters: Option<TransmissionParameters>,
 }
 
 impl<Endpoint: Ord + Clone> Default for AppBuilder<Endpoint> {
     fn default() -> Self {
+        let (sender, receiver) = mpsc::channel(32);
         Self {
             config: ConfigBuilder::default(),
             resources: Vec::new(),
+            control: AppControl::new(sender),
+            control_receiver: Some(receiver),
         }
     }
 }
@@ -29,6 +38,23 @@ impl<Endpoint: Ord + Clone> Default for AppBuilder<Endpoint> {
 impl<Endpoint: Ord + Clone> AppBuilder<Endpoint> {
     pub fn new() -> Self {
         Default::default()
+    }
+
+    /// Return a handle for application-owned reliable Confirmable sends.
+    pub fn control(&self) -> AppControl<Endpoint> {
+        self.control.clone()
+    }
+
+    /// Configure the transmission policy used by Confirmable messages.
+    pub fn transmission_parameters(mut self, parameters: TransmissionParameters) -> Self {
+        self.config.transmission_parameters = Some(parameters);
+        self
+    }
+
+    pub(crate) fn take_control_receiver(&mut self) -> mpsc::Receiver<ControlCommand<Endpoint>> {
+        self.control_receiver
+            .take()
+            .expect("application control receiver already taken")
     }
 
     /// Enable resource discovery by default for all resources in the app.  To disable this

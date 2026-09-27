@@ -13,7 +13,7 @@ use crate::app::observers::NotificationState;
 use crate::app::request_handler::RequestHandler;
 use crate::app::request_type_key::RequestTypeKey;
 use crate::app::retransmission_manager::RetransmissionManager;
-use crate::app::{CoapError, Request};
+use crate::app::{CoapError, Request, SendFailed};
 
 pub struct ResourceHandler<Endpoint: Debug + Clone + Ord + Eq + Hash> {
     pub handlers: HashMap<RequestTypeKey, Box<dyn RequestHandler<Endpoint> + Send + Sync>>,
@@ -135,9 +135,11 @@ impl<Endpoint: Debug + Clone + Eq + Hash + Ord + Send + 'static> ResourceHandler
                                 };
                                 let send_result = send_handle.into_future().await;
                                 if let Err(e) = send_result {
-                                    let peer = initial_pair.source.as_ref();
-                                    log::warn!("Error sending notification to {peer:?}: {e:?}, unregistering observer...");
-                                    break;
+                                    if matches!(e, SendFailed::Reset) {
+                                        let peer = initial_pair.source.as_ref();
+                                        log::warn!("Peer reset notification for {peer:?}, terminating observer...");
+                                        break;
+                                    }
                                 }
                             }
                         }

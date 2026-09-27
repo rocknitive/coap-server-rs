@@ -21,6 +21,7 @@ pub(crate) mod udp_framed_fork;
 /// you're new to CoAP.
 pub struct UdpTransport<A: ToSocketAddrs> {
     addresses: A,
+    socket: Option<UdpSocket>,
     mtu: Option<u32>,
     multicast: bool,
     multicast_joiner: MulticastJoiner,
@@ -44,10 +45,23 @@ impl<A: ToSocketAddrs> UdpTransport<A> {
         let (mtu, multicast, multicast_joiner) = Default::default();
         Self {
             addresses,
+            socket: None,
             mtu,
             multicast,
             multicast_joiner,
         }
+    }
+
+    /// Use an already-bound socket, preserving its local endpoint.
+    pub fn from_socket(socket: UdpSocket) -> io::Result<UdpTransport<SocketAddr>> {
+        let addresses = socket.local_addr()?;
+        Ok(UdpTransport {
+            addresses,
+            socket: Some(socket),
+            mtu: None,
+            multicast: false,
+            multicast_joiner: MulticastJoiner::default(),
+        })
     }
 
     /// Manually set the MTU that will be used for block-wise transfer handling purposes.
@@ -81,8 +95,11 @@ impl<A: ToSocketAddrs> UdpTransport<A> {
 impl<A: ToSocketAddrs + Sync + Send> Transport for UdpTransport<A> {
     type Endpoint = SocketAddr;
 
-    async fn bind(self) -> Result<BoxedFramedBinding<Self::Endpoint>, TransportError> {
-        let socket = UdpSocket::bind(self.addresses).await?;
+    async fn bind(mut self) -> Result<BoxedFramedBinding<Self::Endpoint>, TransportError> {
+        let socket = match self.socket.take() {
+            Some(socket) => socket,
+            None => UdpSocket::bind(self.addresses).await?,
+        };
         if self.multicast {
             self.multicast_joiner.join(&socket)?;
         }

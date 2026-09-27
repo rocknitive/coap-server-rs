@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use std::hash::Hash;
 use std::pin::Pin;
 
 use coap_lite::Packet;
@@ -6,7 +7,10 @@ use futures::stream::Fuse;
 use futures::{SinkExt, StreamExt};
 use log::{error, trace, warn};
 use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::watch;
 
+use crate::app::app_handler::AppHandler;
+use crate::app::AppBuilder;
 use crate::packet_handler::{IntoHandler, PacketHandler};
 use crate::transport::{FramedBinding, FramedItem, FramedReadError, Transport, TransportError};
 
@@ -55,6 +59,39 @@ where
                 }
                 Some(item) = self.packet_relay_rx.recv() => {
                     self.handle_packet_relay(item).await;
+                }
+            }
+        }
+    }
+
+    /// Serve an application with reliable-send control and graceful shutdown support.
+    pub async fn serve_app(
+        mut self,
+        mut builder: AppBuilder<Endpoint>,
+        mut shutdown: watch::Receiver<bool>,
+    ) -> Result<(), FatalServerError>
+    where
+        Endpoint: Ord + Eq + Hash,
+    {
+        let mtu = self.binding.get_ref().mtu();
+        let mut control_rx = builder.take_control_receiver();
+        let handler = AppHandler::from_builder(builder, mtu);
+
+        loop {
+            tokio::select! {
+                event = self.binding.select_next_some() => {
+                    self.handle_rx_event(event)?;
+                }
+                Some(item) = self.packet_relay_rx.recv() => {
+                    self.handle_packet_relay(item).await;
+                }
+                Some(command) = control_rx.recv() => {
+                    handler.handle_control(command, self.packet_relay_tx.clone()).await;
+                }
+                changed = shutdown.changed() => {
+                    if changed.is_ok() && *shutdown.borrow() {
+                        return Ok(());
+                    }
                 }
             }
         }

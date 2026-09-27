@@ -14,14 +14,16 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use crate::app::app_builder::AppBuilder;
 use crate::app::block_handler_util::new_block_handler;
 use crate::app::coap_utils::new_pong_message;
+use crate::app::control::ControlCommand;
 use crate::app::core_handler::CoreRequestHandler;
 use crate::app::error::CoapError;
 use crate::app::path_matcher::{MatchedResult, PathMatcher};
 use crate::app::resource_builder::BuildParameters;
 use crate::app::resource_handler::ResourceHandler;
-use crate::app::retransmission_manager::{RetransmissionManager, TransmissionParameters};
+use crate::app::retransmission_manager::RetransmissionManager;
 use crate::app::Request;
 use crate::packet_handler::PacketHandler;
+use crate::transport::FramedItem;
 
 const DEFAULT_DISCOVERABLE: bool = true;
 pub(crate) const DEFAULT_BLOCK_TRANSFER: bool = true;
@@ -76,8 +78,10 @@ impl<Endpoint: Debug + Clone + Ord + Eq + Hash + Send + 'static> PacketHandler<E
 
 impl<Endpoint: Debug + Clone + Ord + Eq + Hash + Send + 'static> AppHandler<Endpoint> {
     pub fn from_builder(builder: AppBuilder<Endpoint>, mtu: Option<u32>) -> Self {
+        let config = builder.config;
+        let resources = builder.resources;
         let retransmission_manager = Arc::new(Mutex::new(RetransmissionManager::new(
-            TransmissionParameters::default(),
+            config.transmission_parameters.unwrap_or_default(),
         )));
 
         let build_params = BuildParameters {
@@ -89,7 +93,7 @@ impl<Endpoint: Debug + Clone + Ord + Eq + Hash + Send + 'static> AppHandler<Endp
 
         let mut discoverable_resources = Vec::new();
         let mut handlers = HashMap::new();
-        for resource_builder in builder.resources {
+        for resource_builder in resources {
             let resource = resource_builder.build(build_params.clone());
             if let Some(discoverable) = resource.discoverable {
                 discoverable_resources.push(discoverable);
@@ -97,7 +101,7 @@ impl<Endpoint: Debug + Clone + Ord + Eq + Hash + Send + 'static> AppHandler<Endp
             handlers.insert(resource.path, resource.handler);
         }
 
-        let discoverable = builder.config.discoverable.unwrap_or(DEFAULT_DISCOVERABLE);
+        let discoverable = config.discoverable.unwrap_or(DEFAULT_DISCOVERABLE);
         if discoverable {
             let core_resource = CoreRequestHandler::new_resource_builder(discoverable_resources)
                 .build(build_params.clone());
@@ -111,6 +115,31 @@ impl<Endpoint: Debug + Clone + Ord + Eq + Hash + Send + 'static> AppHandler<Endp
             error_block_handler,
             handlers_by_path,
         }
+    }
+
+    pub(crate) async fn handle_control(
+        &self,
+        command: ControlCommand<Endpoint>,
+        packet_relay_tx: tokio::sync::mpsc::Sender<FramedItem<Endpoint>>,
+    ) {
+        let (packet_tx, mut packet_rx) = tokio::sync::mpsc::unbounded_channel();
+        let peer = command.peer.clone();
+        tokio::spawn(async move {
+            while let Some(packet) = packet_rx.recv().await {
+                if packet_relay_tx.send((packet, peer.clone())).await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        let send_handle = self.retransmission_manager.lock().await.send_reliably(
+            command.packet,
+            command.peer,
+            packet_tx,
+        );
+        tokio::spawn(async move {
+            let _ = command.result_tx.send(send_handle.into_future().await);
+        });
     }
 
     async fn handle_packet(&self, tx: UnboundedSender<Packet>, packet: Packet, peer: Endpoint) {
@@ -176,11 +205,10 @@ impl<Endpoint: Debug + Clone + Ord + Eq + Hash + Send + 'static> AppHandler<Endp
         if log::log_enabled!(log::Level::Debug) {
             let peer = &request.source;
             let method = request.get_method();
-            let path = request.get_path();
             let handler_label = resource
                 .as_ref()
                 .map_or_else(|| ": <no resource>!", |_| ": matched resource...");
-            debug!("Received from [{peer:?}]: {method:?} /{path}{handler_label}");
+            debug!("Received from [{peer:?}]: {method:?}{handler_label}");
         }
 
         match resource {

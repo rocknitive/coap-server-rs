@@ -1,4 +1,5 @@
 pub use app_builder::AppBuilder;
+pub use control::AppControl;
 pub use error::CoapError;
 pub use observable_resource::ObservableResource;
 pub use observers::Observers;
@@ -6,6 +7,7 @@ pub use observers::ObserversHolder;
 pub use request::Request;
 pub use resource_builder::ResourceBuilder;
 pub use response::Response;
+pub use retransmission_manager::{SendFailed, TransmissionParameters};
 use std::fmt::Debug;
 use std::hash::Hash;
 
@@ -13,6 +15,7 @@ pub mod app_builder;
 pub mod app_handler;
 mod block_handler_util;
 mod coap_utils;
+mod control;
 mod core_handler;
 mod core_link;
 pub mod error;
