@@ -102,6 +102,15 @@ where
                 assert_eq!(ptr, read.filled().as_ptr());
                 let addr = res.map_err(|e| (C::Error::from(e), None))?;
                 pin.rd.advance_mut(read.filled().len());
+
+                // A UDP source port of zero is reserved and must not be used as a
+                // response destination. Drop the datagram before decoding it so
+                // callers cannot accidentally send a response to that endpoint.
+                if addr.port() == 0 {
+                    pin.rd.clear();
+                    continue;
+                }
+
                 addr
             };
 
@@ -153,7 +162,17 @@ where
             ..
         } = *self;
 
-        let n = ready!(socket.borrow().poll_send_to(cx, wr, *out_addr))?;
+        let n = match ready!(socket.borrow().poll_send_to(cx, wr, *out_addr)) {
+            Ok(n) => n,
+            Err(error) => {
+                // A failed datagram must not remain queued. Otherwise the next
+                // call to poll_ready() retries this destination indefinitely and
+                // prevents later responses from being sent.
+                wr.clear();
+                self.flushed = true;
+                return Poll::Ready(Err(error.into()));
+            }
+        };
 
         let wrote_all = n == self.wr.len();
         self.wr.clear();
@@ -251,5 +270,87 @@ where
     /// Consumes the `Framed`, returning its underlying I/O stream.
     pub fn into_inner(self) -> T {
         self.socket
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UdpFramed;
+    use bytes::{Bytes, BytesMut};
+    use futures::SinkExt;
+    use std::io;
+    use tokio::net::UdpSocket;
+    use tokio::time::{timeout, Duration};
+    use tokio_util::codec::{Decoder, Encoder};
+
+    #[derive(Default)]
+    struct TestCodec;
+
+    impl Decoder for TestCodec {
+        type Item = BytesMut;
+        type Error = io::Error;
+
+        fn decode(&mut self, buffer: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+            if buffer.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(buffer.split()))
+            }
+        }
+    }
+
+    impl Encoder<Bytes> for TestCodec {
+        type Error = io::Error;
+
+        fn encode(&mut self, item: Bytes, buffer: &mut BytesMut) -> Result<(), Self::Error> {
+            buffer.extend_from_slice(&item);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn successful_send_delivers_the_packet() {
+        let receiver = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let sender = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let receiver_addr = receiver.local_addr().unwrap();
+        let mut framed = UdpFramed::new(sender, TestCodec);
+
+        framed
+            .send((Bytes::from_static(b"packet"), receiver_addr))
+            .await
+            .unwrap();
+
+        let mut buffer = [0; 64];
+        let (length, _) = timeout(Duration::from_secs(1), receiver.recv_from(&mut buffer))
+            .await
+            .expect("timed out waiting for packet")
+            .unwrap();
+        assert_eq!(&buffer[..length], b"packet");
+    }
+
+    #[tokio::test]
+    async fn failed_send_is_dropped_before_the_next_send() {
+        let receiver = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let sender = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let receiver_addr = receiver.local_addr().unwrap();
+        let invalid_addr = "127.0.0.1:0".parse().unwrap();
+        let mut framed = UdpFramed::new(sender, TestCodec);
+
+        assert!(framed
+            .send((Bytes::from_static(b"failed"), invalid_addr))
+            .await
+            .is_err());
+
+        framed
+            .send((Bytes::from_static(b"next"), receiver_addr))
+            .await
+            .unwrap();
+
+        let mut buffer = [0; 64];
+        let (length, _) = timeout(Duration::from_secs(1), receiver.recv_from(&mut buffer))
+            .await
+            .expect("timed out waiting for packet")
+            .unwrap();
+        assert_eq!(&buffer[..length], b"next");
     }
 }
